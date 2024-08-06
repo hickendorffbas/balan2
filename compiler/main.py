@@ -154,4 +154,11 @@ print(ast_statements)
 
 
 
+#write temporary binary file to test vm:
+
+
+bytes_to_write = [2, 100, 2, 200, 1, 1]
+bb2_file = open("test.bb2", "wb")
+for byte in bytes_to_write:
+    bb2_file.write(byte.to_bytes(1, byteorder='big'))
 
