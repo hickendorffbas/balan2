@@ -21,17 +21,19 @@ fn main() {
         }
 
         match opcode.unwrap().ok().unwrap() {
-            1 => {
-                //builtin print()
-
+            1 => { //builtin print()
                 let popped_arg = stack.pop().unwrap();
                 println!("{}", popped_arg);
 
             },
-            2 => {
-                // push value (a byte for now)
+            2 => { // push value (a byte for now)
                 let value = bytes.next().unwrap().ok().unwrap();
                 stack.push(value);
+            },
+            3 => { //plus
+                let left = stack.pop().unwrap();
+                let right = stack.pop().unwrap();
+                stack.push(left + right);
             },
             _ => {
                 todo!("Unknown opode");
