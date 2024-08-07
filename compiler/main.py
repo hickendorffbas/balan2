@@ -22,7 +22,6 @@ with open(sys.argv[1], "r") as code_file:
 
 
 NON_IDENT_CHARS = ["\n", " ", "\t", "(", ")", ";", ",", "+", "-", "/", "*"]
-BUILTIN_FUNCTION_NAMES = ["print"]
 
 tokens = []
 
@@ -70,12 +69,14 @@ while idx < len(code_text):
 
 
 
-print(tokens)
 
-
-BUILTIN_OPCODES = {
+BUILTIN_FUNCTION_OPCODES = {
     "print": 1,
 }
+BUILTIN_FUNCTIONS_NUMBER_OF_ARGS = {
+    1: 1,
+}
+
 
 class AstBuiltinFunction:
 
@@ -84,14 +85,22 @@ class AstBuiltinFunction:
         self.arguments = arguments
 
     def generate(self):
-        code = self.arguments[0].generate() #TODO: handle unexpected number of args
 
-        print("len ", len(self.arguments))
-
-        if self.name in BUILTIN_OPCODES:
-            return code + [BUILTIN_OPCODES[self.name]]
+        if self.name in BUILTIN_FUNCTION_OPCODES:
+            opcode = BUILTIN_FUNCTION_OPCODES[self.name]
         else:
             raise Exception("Unknown builtin")
+
+        expected_number_of_args = BUILTIN_FUNCTIONS_NUMBER_OF_ARGS[opcode]
+
+        if len(self.arguments) != expected_number_of_args:
+            raise Exception("Invalid number of args supplied to builtin function")
+
+        code = []
+        for arg in self.arguments:
+            code = code + arg.generate()
+
+        return code + [opcode]
 
 
 class AstNumber:
@@ -111,25 +120,20 @@ class AstBinOp:
         self.right = right
 
     def generate(self):
-        print("L", self.left.number)
-        print("R", self.right.number)
-
-
         left_code = self.left.generate()
         right_code = self.right.generate()
-
-        print("CC", left_code, right_code)
 
         if self.op == "+":
             binop_opcode = 3
         else:
             raise Exception("operation not implemented")
 
-        print(left_code + right_code + [binop_opcode])
         return left_code + right_code + [binop_opcode]
 
 
 def parse_expression(tokens):
+    blocked_tokens = block_tokens(tokens, TokenType.OPEN_PARENTHESIS, TokenType.CLOSE_PARENTHESIS)
+
     if len(tokens) == 1:
         if tokens[0][0] == TokenType.NUMBER:
             return AstNumber(tokens[0][1])
@@ -137,14 +141,13 @@ def parse_expression(tokens):
         raise Exception(f"ERROR: unparsable tokens: {tokens}", )
 
 
-    if tokens[0][0] == TokenType.IDENTIFIER and tokens[0][1] in BUILTIN_FUNCTION_NAMES and tokens[1][0] == TokenType.OPEN_PARENTHESIS:
+    if tokens[0][0] == TokenType.IDENTIFIER and tokens[0][1] in BUILTIN_FUNCTION_OPCODES.keys() and tokens[1][0] == TokenType.OPEN_PARENTHESIS:
         function_name = tokens[0][1]
 
         #TODO: enormous hack below (removing close parenthesis):
         tokens = tokens[2:-1]
 
-        argument_tokens_list = split_tokens(tokens, TokenType.COMMA)
-        print("Args", argument_tokens_list)
+        argument_tokens_list = split_tokens(tokens, blocked_tokens, TokenType.COMMA)
 
         arguments_asts = []
         for argument_tokens in argument_tokens_list:
@@ -154,10 +157,9 @@ def parse_expression(tokens):
         return AstBuiltinFunction(function_name, arguments_asts)
 
 
-    #TODO: we need the blackout stuff
-    token_types = [token[0] for token in tokens]
+    token_types = [token[0] for token in blocked_tokens]
     if TokenType.PLUS in token_types:
-        plus_split = split_tokens(tokens, TokenType.PLUS)
+        plus_split = split_tokens(tokens, blocked_tokens, TokenType.PLUS)
 
         left = parse_expression(plus_split[0])
         right = parse_expression(plus_split[1])
@@ -167,6 +169,23 @@ def parse_expression(tokens):
 
     raise Exception(f"ERROR: can't parse {tokens}")
 
+
+
+def block_tokens(tokens, start_delim_type, end_delim_type):
+    nesting = 0
+    blocked_tokens = []
+
+    for tok in tokens:
+        if tok[0] == end_delim_type:
+            nesting =- 1
+        if nesting == 0:
+            blocked_tokens.append(tok)
+        else:
+            blocked_tokens.append( (None, None) )
+        if tok[0] == start_delim_type:
+            nesting += 1
+
+    return blocked_tokens
 
 
 
@@ -179,17 +198,17 @@ def get_tokens_until_type(tokens, start_idx, token_type):
     return tokens[start_idx:idx], idx
 
 
-def split_tokens(tokens, token_type):
+def split_tokens(tokens, blocked_tokens, token_type):
     splits = []
 
     cur_split = []
-    for token in tokens:
-        if token[0] == token_type:
+    for idx in range(0, len(tokens)):
+        if blocked_tokens[idx][0] == token_type:
             if cur_split:
                 splits.append(cur_split)
                 cur_split = []
         else:
-            cur_split.append(token)
+            cur_split.append(tokens[idx])
     if cur_split:
         splits.append(cur_split)
     return splits
@@ -201,7 +220,7 @@ idx = 0
 ast_statements = []
 
 
-statement_tokens_list = split_tokens(tokens, TokenType.SEMICOLON)
+statement_tokens_list = split_tokens(tokens, tokens, TokenType.SEMICOLON)
 
 
 for statement_tokens in statement_tokens_list:
