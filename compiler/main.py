@@ -330,7 +330,11 @@ for statement in ast_statements:
 print(bytes_to_write)
 
 
-bb2_file = open("test.bb2", "wb")
+outfile_name = sys.argv[2]
+
+bb2_file = open(outfile_name, "wb")
 for byte in bytes_to_write:
     bb2_file.write(byte.to_bytes(1, byteorder='big'))
+
+print("written " + outfile_name)
 
