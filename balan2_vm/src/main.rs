@@ -20,11 +20,13 @@ fn main() {
             break;
         }
 
+        println!("running opcode {:?} on stack {:?}", opcode.as_ref().unwrap().as_ref().ok().as_ref().unwrap(), stack);
+
+
         match opcode.unwrap().ok().unwrap() {
             1 => { //builtin print()
                 let popped_arg = stack.pop().unwrap();
                 println!("{}", popped_arg);
-
             },
             2 => { // push value (a byte for now)
                 let value = bytes.next().unwrap().ok().unwrap();
@@ -35,6 +37,17 @@ fn main() {
                 let right = stack.pop().unwrap();
                 stack.push(left + right);
             },
+            4 => { //store
+                let address = bytes.next().unwrap().ok().unwrap(); //TODO: this is an idiotic amount of unwrapping
+                stack[usize::from(address)] = stack.pop().unwrap();
+            },
+            5 => { //load
+                let address = bytes.next().unwrap().ok().unwrap(); //TODO: this is an idiotic amount of unwrapping
+                let value = stack[usize::from(address)].clone();
+                stack.push(value);
+            },
+
+
             _ => {
                 todo!("Unknown opode");
             }

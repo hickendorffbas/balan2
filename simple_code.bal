@@ -1,1 +1,2 @@
-print(3 + 1);
+x: int = 2;
+print(x + 1);
