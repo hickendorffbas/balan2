@@ -20,7 +20,7 @@ fn main() {
             break;
         }
 
-        println!("running opcode {:?} on stack {:?}", opcode.as_ref().unwrap().as_ref().ok().as_ref().unwrap(), stack);
+        //println!("running opcode {:?} on stack {:?}", opcode.as_ref().unwrap().as_ref().ok().as_ref().unwrap(), stack);
 
 
         match opcode.unwrap().ok().unwrap() {
