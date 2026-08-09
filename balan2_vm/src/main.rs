@@ -49,7 +49,7 @@ fn main() {
 
 
             _ => {
-                todo!("Unknown opode");
+                todo!("Unknown opcode");
             }
 
         }

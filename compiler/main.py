@@ -1,340 +1,181 @@
 import sys
 
+from dataclasses import dataclass
 from enum import Enum
 
+import balan_ast
+from lexer import lex, TokenType
 
-class TokenType(Enum):
-    IDENTIFIER = 1
-    NUMBER = 2
-    OPEN_PARENTHESIS = 3
-    CLOSE_PARENTHESIS = 4
-    SEMICOLON = 5
-    COMMA = 6
-    PLUS = 7
-    MINUS = 8
-    TIMES = 9
-    FORWARD_SLASH = 10
-    COLON = 11
-    EQUALS = 12
+
+#TODO: make AST produce the existing bytecode
+
+
+class Parser:
+
+    INFIX_BP = {
+        TokenType.PLUS: (10, 11),
+        TokenType.MINUS: (10, 11),
+        TokenType.STAR: (20, 21),
+        TokenType.FORWARD_SLASH: (20, 21),
+    }
+
+    PREFIX_BP = 30
+
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.pos = 0
+
+    # --------------------------------------------------------
+    # Basic helpers
+    # --------------------------------------------------------
+
+    @property
+    def current(self):
+        return self.tokens[self.pos]
+
+    def peek(self, offset=1):
+        return self.tokens[self.pos + offset]
+
+    def advance(self):
+        token = self.current
+        self.pos += 1
+        return token
+
+    def match(self, token_type):
+        if self.current.token_type == token_type:
+            return self.advance()
+        return None
+
+    def expect(self, token_type):
+        token = self.advance()
+        if token.token_type != token_type:
+            raise SyntaxError(f"Expected {token_type}, got {token.token_type}")
+        return token
+
+    def parse(self):
+        statements = []
+
+        while self.current.token_type != TokenType.EOF:
+            statements.append(self.parse_statement())
+            self.match(TokenType.SEMICOLON)
+
+        return balan_ast.AstProgram(statements)
+
+    def parse_statement(self):
+        if self.current.token_type == TokenType.IDENT and self.peek().token_type == TokenType.EQUALS:
+            return self.parse_assignment()
+        if self.current.token_type == TokenType.IDENT and self.peek().token_type == TokenType.COLON:
+            return self.parse_declaration()
+
+        expr = self.parse_expression()
+        return balan_ast.AstExprStmt(expr)
+
+    def parse_assignment(self):
+        name = self.expect(TokenType.IDENT).value
+        self.expect(TokenType.EQUALS)
+        value = self.parse_expression()
+        return balan_ast.AstAssign(name, value)
+
+    def parse_declaration(self):
+        name = self.expect(TokenType.IDENT).value
+        self.expect(TokenType.COLON)
+        type = self.expect(TokenType.TYPE).value
+        if self.current.token_type == TokenType.EQUALS:
+            self.expect(TokenType.EQUALS)
+            initializer = self.parse_expression()
+        else:
+            initializer = None
+        return balan_ast.AstDeclaration(name, type, initializer)
+
+    def parse_expression(self, min_bp=0):
+        left = self.parse_prefix()
+
+        while True:
+            token = self.current
+
+            if token.token_type == TokenType.PARENTHESIS_OPEN:
+                left = self.parse_function_call(left)
+                continue
+
+            if token.token_type not in self.INFIX_BP:
+                break
+
+            left_bp, right_bp = self.INFIX_BP[token.token_type]
+
+            if left_bp < min_bp:
+                break
+
+            op = self.advance().value
+            right = self.parse_expression(right_bp)
+            left = balan_ast.AstBinaryOp(left, op, right)
+
+        return left
+
+    def parse_prefix(self):
+        token = self.advance()
+
+        if token.token_type == TokenType.NUMBER:
+            return balan_ast.AstNumber(int(token.value))
+
+        if token.token_type == TokenType.IDENT:
+            return balan_ast.AstVariable(token.value)
+
+        if token.token_type == TokenType.MINUS:
+            operand = self.parse_expression(self.PREFIX_BP)
+            return balan_ast.AstUnaryOp("-", operand)
+
+        if token.token_type == TokenType.PARENTHESIS_OPEN:
+            expr = self.parse_expression()
+            self.expect(TokenType.PARENTHESIS_CLOSE)
+            return expr
+
+        raise SyntaxError(f"Unexpected token: {token.token_type}")
+
+    def parse_function_call(self, callee):
+        self.expect(TokenType.PARENTHESIS_OPEN)
+
+        arguments = []
+        if self.current.token_type != TokenType.PARENTHESIS_CLOSE:
+            while True:
+                arguments.append(self.parse_expression())
+
+                if self.current.token_type != TokenType.COMMA:
+                    break
+                self.expect(TokenType.COMMA)
+
+        self.expect(TokenType.PARENTHESIS_CLOSE)
+
+        if isinstance(callee, balan_ast.AstVariable):
+            if callee.name in balan_ast.BUILTIN_FUNCTION_OPCODES:
+                return balan_ast.AstBuiltinCall(callee.name, arguments)
+
+        return balan_ast.AstFunctionCall(callee, arguments)
 
 
 with open(sys.argv[1], "r") as code_file:
-    code_text = code_file.read()
+    source = code_file.read()
 
+tokens = lex(source)
 
-NON_IDENT_CHARS = ["\n", " ", "\t", "(", ")", ";", ",", "+", "-", "/", "*", ":", "="]
+print(tokens)
 
-tokens = []
+parser = Parser(tokens)
+ast = parser.parse()
 
-DIRECT_TOKEN_MAPPING = {
-    "(": TokenType.OPEN_PARENTHESIS,
-    ")": TokenType.CLOSE_PARENTHESIS,
-    ";": TokenType.SEMICOLON,
-    ",": TokenType.COMMA,
-    "+": TokenType.PLUS,
-    "-": TokenType.MINUS,
-    "*": TokenType.TIMES,
-    "/": TokenType.FORWARD_SLASH,
-    ":": TokenType.COLON,
-    "=": TokenType.EQUALS,
-}
+print(ast)
 
-idx = 0
-while idx < len(code_text):
-    cur_char = code_text[idx]
-
-    if cur_char in DIRECT_TOKEN_MAPPING:
-        tokens.append( (DIRECT_TOKEN_MAPPING[cur_char], None) )
-
-    elif cur_char in (" ", "\n", "\t"):
-        pass
-
-    elif cur_char.isnumeric():
-        number = ""
-        while idx < len(code_text) and code_text[idx].isnumeric():
-            number += code_text[idx]
-            idx += 1
-        tokens.append( (TokenType.NUMBER, number) )
-        continue
-
-    elif cur_char not in NON_IDENT_CHARS:
-        identifier = ""
-        while idx < len(code_text) and code_text[idx] not in NON_IDENT_CHARS:
-            identifier += code_text[idx]
-            idx += 1;
-        tokens.append( (TokenType.IDENTIFIER, identifier) )
-        continue
-
-    else:
-        raise Exception(f"ERROR: unknown token: {cur_char}")
-
-    idx += 1
-
-
-
-BUILTIN_FUNCTION_OPCODES = {
-    "print": 1,
-}
-BUILTIN_FUNCTIONS_NUMBER_OF_ARGS = {
-    1: 1,
-}
-OPCODE_PUSH = 2
-OPCODE_ADD = 3
-OPCODE_STORE = 4
-OPCODE_LOAD = 5
-
-
-VARS = {} #TODO: these are local vars, but I don't have functions yet, will need to be done differently in the future
-NEXT_VAR_IDX = 0
-
-
-class AstBuiltinFunction:
-
-    def __init__(self, name, arguments):
-        self.name = name
-        self.arguments = arguments
-
-    def generate(self):
-
-        if self.name in BUILTIN_FUNCTION_OPCODES:
-            opcode = BUILTIN_FUNCTION_OPCODES[self.name]
-        else:
-            raise Exception("Unknown builtin")
-
-        expected_number_of_args = BUILTIN_FUNCTIONS_NUMBER_OF_ARGS[opcode]
-
-        if len(self.arguments) != expected_number_of_args:
-            raise Exception("Invalid number of args supplied to builtin function")
-
-        code = []
-        for arg in self.arguments:
-            code = code + arg.generate()
-
-        return code + [opcode]
-
-
-class AstNumber:
-
-    def __init__(self, number):
-        self.number = number
-
-    def generate(self):
-        return [OPCODE_PUSH, int(self.number)]
-
-
-class AstBinOp:
-
-    def __init__(self, op, left, right):
-        self.op = op
-        self.left = left
-        self.right = right
-
-    def generate(self):
-        left_code = self.left.generate()
-        right_code = self.right.generate()
-
-        if self.op == "+":
-            binop_opcode = OPCODE_ADD
-        else:
-            raise Exception("operation not implemented")
-
-        return left_code + right_code + [binop_opcode]
-
-
-class AstVariable:
-
-    def __init__(self, name):
-        self.name = name
-
-    def generate(self):
-        return [OPCODE_LOAD, VARS[self.name]]
-
-
-class AstAssign:
-
-    def __init__(self, left, right):
-        self.left = left
-        self.right = right
-
-    def generate(self):
-        right_code = self.right.generate()
-
-        if type(self.left).__name__ == "AstVariable":
-            address = VARS[self.left.name]
-            return right_code + [OPCODE_STORE, address]
-
-        if type(self.left).__name__ == "AstDeclaration":
-            left_code = self.left.generate() #TODO: declarations can be halfway deep in statements (because assignment is an expression), so we'll need to hoist them to before the expression
-            address = VARS[self.left.name]
-            return left_code + right_code + [OPCODE_STORE, address]
-
-        raise Exception("can't assign to something non variable yet")
-
-
-class AstDeclaration:
-
-    def __init__(self, name, var_type):
-        self.name = name
-        self.var_type = var_type
-
-    def generate(self):
-        #TODO: this is only correct if we hoist the declarations to before the current statement (make a tree operator for that)
-
-        global NEXT_VAR_IDX
-        #TODO: do something intelligent with the type
-        #TODO: the id below is not always going to be correct, since it should go down when exitting a function
-        VARS[self.name] = NEXT_VAR_IDX
-        NEXT_VAR_IDX += 1
-        int_default_value = 0
-        return [OPCODE_PUSH, int_default_value]
-
-
-
-def parse_expression(tokens):
-    masked_token_types = [token[0] for token in mask_tokens(tokens, TokenType.OPEN_PARENTHESIS, TokenType.CLOSE_PARENTHESIS)] #TODO: eventually we also need to mask in braces and brackets, build that in one function, don't take the delimiters as arguments anymore
-
-    if TokenType.EQUALS in masked_token_types:
-        splits = split_tokens(tokens, masked_token_types, TokenType.EQUALS)
-        left = parse_expression(splits[0])
-        right = parse_expression(splits[1])
-
-        return AstAssign(left, right)
-
-
-    if len(tokens) == 1:
-        if tokens[0][0] == TokenType.NUMBER:
-            return AstNumber(tokens[0][1])
-        if tokens[0][0] == TokenType.IDENTIFIER:
-            return AstVariable(tokens[0][1])
-
-
-    if TokenType.PLUS in masked_token_types:
-        plus_split = split_tokens(tokens, masked_token_types, TokenType.PLUS)
-
-        left = parse_expression(plus_split[0])
-        right = parse_expression(plus_split[1])
-
-        return AstBinOp("+", left, right)
-
-
-
-    if len(tokens) > 2 and non_masked_types_equal(masked_token_types, [TokenType.IDENTIFIER, TokenType.OPEN_PARENTHESIS, TokenType.CLOSE_PARENTHESIS]) and tokens[0][1] in BUILTIN_FUNCTION_OPCODES.keys():
-        builtin_name = tokens[0][1]
-
-        argument_tokens = get_masked_tokens(tokens, masked_token_types)
-        masked_argument_token_types = [token[0] for token in mask_tokens(argument_tokens, TokenType.OPEN_PARENTHESIS, TokenType.CLOSE_PARENTHESIS)]
-        argument_tokens_list = split_all_tokens(argument_tokens, masked_argument_token_types, TokenType.COMMA)
-
-        arguments_asts = []
-        for argument_tokens in argument_tokens_list:
-            argument_ast = parse_expression(argument_tokens)
-            arguments_asts.append(argument_ast)
-
-        return AstBuiltinFunction(builtin_name, arguments_asts)
-
-
-    if TokenType.COLON in masked_token_types:
-
-        splits = split_tokens(tokens, masked_token_types, TokenType.COLON)
-
-        assert len(splits[0]) == 1  #TODO: proper error handling
-        assert len(splits[1]) == 1  #TODO: proper error handling
-
-        return AstDeclaration(splits[0][0][1], splits[1][0][1])
-
-
-
-    raise Exception(f"ERROR: can't parse {tokens}")
-
-
-
-def mask_tokens(tokens, start_delim_type, end_delim_type):
-    nesting = 0
-    masked_tokens = []
-
-    for tok in tokens:
-        if tok[0] == end_delim_type:
-            nesting -= 1
-        if nesting == 0:
-            masked_tokens.append(tok)
-        else:
-            masked_tokens.append( (None, None) )
-        if tok[0] == start_delim_type:
-            nesting += 1
-
-    return masked_tokens
-
-
-
-def get_tokens_until_type(tokens, start_idx, token_type):
-    idx = start_idx
-    while idx < len(tokens):
-        if tokens[idx][0] == token_type:
-            break
-        idx += 1
-    return tokens[start_idx:idx], idx
-
-
-def split_tokens(tokens, masked_token_types, token_type):
-    idx = masked_token_types.index(token_type)
-    return tokens[:idx], tokens[idx+1:]
-
-
-def split_all_tokens(tokens, masked_token_types, token_type):
-    splits = []
-    cur_split = []
-    for idx in range(0, len(tokens)):
-        if masked_token_types[idx] == token_type:
-            splits.append(cur_split)
-            cur_split = []
-        else:
-            cur_split.append(tokens[idx])
-    if cur_split:
-        splits.append(cur_split)
-    return splits
-
-
-def non_masked_types_equal(masked_token_types, types_to_check):
-    non_masked_token_types = [token_type for token_type in masked_token_types if token_type is not None]
-    return non_masked_token_types == types_to_check
-
-
-def get_masked_tokens(tokens, masked_token_types):
-    return_tokens = []
-    for idx in range(0, len(tokens)):
-        if masked_token_types[idx] is None:
-            return_tokens.append(tokens[idx])
-    return return_tokens
-
-
-
-idx = 0
-ast_statements = []
-
-
-masked_token_types = [token[0] for token in mask_tokens(tokens, TokenType.OPEN_PARENTHESIS, TokenType.CLOSE_PARENTHESIS)]
-statement_tokens_list = split_all_tokens(tokens, masked_token_types, TokenType.SEMICOLON)
-
-
-for statement_tokens in statement_tokens_list:
-    expression_statement = parse_expression(statement_tokens)
-
-    ast_statements.append(expression_statement)
-
-
-bytes_to_write = []
-for statement in ast_statements:
-    bytes_to_write.extend(statement.generate())
-
+bytes_to_write = ast.generate()
 
 print(bytes_to_write)
 
-
 outfile_name = sys.argv[2]
+
+#TODO: it seems we don't handle variable indexes good enough. We point to them on the same stack, but we can't know
+#      the address beforehand. Will need to be assigned by the vm (which can be confusing, since we translate to an index during compliation,
+#      but that index still needs to be mapped to stack position)
 
 bb2_file = open(outfile_name, "wb")
 for byte in bytes_to_write:
     bb2_file.write(byte.to_bytes(1, byteorder='big'))
 
 print("written " + outfile_name)
-
